@@ -75,14 +75,14 @@ def main_parser():
     parser = argparse.ArgumentParser(description='Test TF-Eesen Model')
 
     #io options
-    parser.add_argument('--data_dir', help = "like data_dir for training script")
-    parser.add_argument('--results_dir', help='log and results dir')
+    parser.add_argument('--data_dir', default = "", help = "like data_dir for training script")
+    parser.add_argument('--results_dir', default = "log", help='log and results dir')
     parser.add_argument('--save_every_batch', default = -1, type=int, help='log and results dir')
     parser.add_argument('--online_storage', default = False, action='store_true', help='online storage (for big datasets to not explode in memory)')
 
     #train configuration options
-    parser.add_argument('--train_config', help = "model to load for evaluation")
-    parser.add_argument('--trained_weights', help = "model to load for evaluation")
+    parser.add_argument('--train_config', default = "", help = "model to load for evaluation")
+    parser.add_argument('--trained_weights', default = "", help = "model to load for evaluation")
 
     #computing options
     parser.add_argument('--batch_size', default = 32, type=int, help='batch size')
@@ -112,7 +112,6 @@ def create_test_config(args, language_scheme):
     config_test[constants.CONFIG_TAGS_TEST.USE_PRIORS] = args.use_priors
     config_test[constants.CONFIG_TAGS_TEST.BATCH_SIZE] = args.batch_size
     config_test[constants.CONFIG_TAGS_TEST.ONLINE_STORAGE] = args.online_storage
-
     config_test[constants.CONFIG_TAGS_TEST.SUBSAMPLED_UTT] = args.subsampled_utt
 
     if(config_test[constants.CONFIG_TAGS_TEST.USE_PRIORS]):
@@ -129,11 +128,11 @@ def check_paths(args):
         print("exiting...")
         sys.exit()
 
-    if not os.path.exists(args.trained_weights+".index"):
-        print("Error: eval_weights does not correspond to a valid path: "+args.trained_weights)
-        print(debug.get_debug_info())
-        print("exiting...")
-        sys.exit()
+    # if not os.path.exists(args.trained_weights+".index"):
+    #     print("Error: eval_weights does not correspond to a valid path: "+args.trained_weights)
+    #     print(debug.get_debug_info())
+    #     print("exiting...")
+    #     sys.exit()
 
     if not os.path.exists(args.data_dir):
         print("Error: test_data does not correspond to a valid path: "+args.data_dir)
@@ -141,7 +140,16 @@ def check_paths(args):
         print("exiting...")
         sys.exit()
 
-    if(not os.path.exists(args.results_dir)):
+
+    if(os.path.exists(args.results_dir)):
+        print("cleaning dir...")
+        for f in os.listdir(args.results_dir):
+            print("deleteting "+f+" ...")
+            if (os.path.isfile(os.path.join(args.results_dir, f))):
+                os.remove(os.path.join(args.results_dir, f))
+            else:
+                shutil.rmtree(os.path.join(args.results_dir, f))
+    else:
         print("results_dir ("+str(args.result_dirs)+") does not exist")
         print(debug.get_debug_info())
         print("exiting...")
@@ -149,7 +157,7 @@ def check_paths(args):
 
 def count_number_augmented_occurences(batches_id):
 
-    dict_count ={}
+    dict_count = {}
 
     for batch_id in batches_id:
         for utt_id in batch_id[0]:

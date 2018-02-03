@@ -2,10 +2,7 @@ import os
 import constants
 import sys
 import shutil
-try:
-    import h5py
-except:
-    pass
+import h5py
 
 import time
 from itertools import islice
@@ -20,6 +17,40 @@ from models.achen import *
 
 from utils.fileutils.kaldi import writeArk, writeScp
 
+
+def get_units(units_path="/home/haoxiang/Desktop/eesen-tf_clean/swdb-tf/data_pitch/local/dict_char/units.txt"):
+    #
+    # units_char_to_id={}
+    # flag_eos_find = False
+    #
+    # if(os.path.isfile(units_path)):
+    #     with open(units_path, 'r') as input:
+    #         for line in input:
+    #             if(line.split()[0] == "<eos>"):
+    #                 flag_eos_find = True
+    #
+    #             if(line.strip().split(' ')[0] == "<space>"):
+    #                 units_char_to_id["<space>"] = int(line.strip().split(' ')[1])
+    #             else:
+    #                 units_char_to_id[line.strip().split(' ')[0]] = int(line.strip().split(' ')[1])
+    # else:
+    #     print("Path to units txt does not exist")
+    #     print(debug.get_debug_info())
+    #     print("exiting...")
+    #     sys.exit()
+    #
+    # if(not flag_eos_find):
+    #     print("Path eos symbol was not found ("+ "<eos>" +")")
+    #     print(debug.get_debug_info())
+    #     print("exiting...")
+
+    # print(units_char_to_id)
+
+    units_char_to_id = {' ': 42, "'": 2, '&': 1, '-': 3, '/': 4, '1': 6, '0': 5, '3': 8, '2': 7, '5': 10, '4': 9, '7': 12, '6': 11, '9': 14, '8': 13, '<eos>': 43, '_': 15, 'a': 16, 'c': 18, 'b': 17, 'e': 20, 'd': 19, 'g': 22, 'f': 21, 'i': 24, 'h': 23, 'k': 26, 'j': 25, 'm': 28, 'l': 27, 'o': 30, 'n': 29, 'q': 32, 'p': 31, 's': 34, 'r': 33, 'u': 36, 't': 35, 'w': 38, 'v': 37, 'y': 40, 'x': 39, 'z': 41}
+
+    units_id_to_char = {v: k for k, v in units_char_to_id.items()}
+
+    return units_char_to_id, units_id_to_char
 
 class Test():
 
@@ -37,14 +68,34 @@ class Test():
 
         self.__model = create_model(config)
 
+        # print outputs for debuging
+        logit = self.__model.logits[-1][-1]
+        print("logits!!!!")
+        print(logit)
+
+        logit = tf.transpose(logit, [1, 0, 2])
+        decoded, log_prob = tf.nn.ctc_greedy_decoder(logit, self.__model.seq_len)
+        decode_op = tf.sparse_tensor_to_dense(tf.cast(decoded[0], tf.int32))
+
+        # sv = tf.train.Supervisor(logdir=config[constants.CONFIG_TAGS_TEST.TRAINED_WEIGHTS])
         with tf.Session() as sess:
 
             saver = tf.train.Saver()
 
+
             print("restoring weights from path:")
             print (config[constants.CONFIG_TAGS_TEST.TRAINED_WEIGHTS])
 
-            saver.restore(sess, config[constants.CONFIG_TAGS_TEST.TRAINED_WEIGHTS])
+            saver.restore(sess, tf.train.latest_checkpoint(config[constants.CONFIG_TAGS_TEST.TRAINED_WEIGHTS]) )
+
+            print(tf.get_default_graph().get_all_collection_keys())
+            all_vars = tf.get_collection("trainable_variables")
+            print(all_vars)
+            for v in all_vars:
+                print(v)
+                v_ = sess.run(v)
+                print(v_)
+
 
             print("weights restored")
             print(80 * "-")
@@ -54,9 +105,18 @@ class Test():
 
             ntest, test_costs, test_ters, ntest_labels = self.__create_counter_containers(config)
 
+            print("Process start!")
 
             process, data_queue, test_x = self.__generate_queue(config, data)
+
+            print("Process generated!")
+
             process.start()
+
+            print("Process started!")
+
+
+
 
             start_time = time.time()
 
@@ -68,6 +128,8 @@ class Test():
                 data = data_queue.get()
                 if data is None:
                     break
+
+                print("Test batch" + str(batch_counter))
 
                 feed, batch_size, index_correct_lan, batch_id, y_batch = self.__prepare_feed(data, config)
 
@@ -108,6 +170,20 @@ class Test():
                     complete= (float(batch_counter)/float(total_number_batches))*100
                     print("Test done: %.1f (batch %d of %d)" % (complete, batch_counter, total_number_batches))
 
+                outputs = sess.run(decode_op, feed)
+                #labels = sess.run(self.__model.labels, feed)
+                #print(labels[0])
+                print(outputs[0])
+
+
+                _, u_to_char = get_units()
+                u_to_char[0] = ""
+                print(u_to_char)
+
+                for i in range(len(outputs)):
+                    line = outputs[i]
+                    chars = [u_to_char[id] for id in line]
+                    print("".join(chars))
                 batch_counter += 1
 
             process.join()
@@ -123,8 +199,8 @@ class Test():
                     for target_id, _ in target_scheme.items():
                         test_costs[language_id][target_id] = test_costs[language_id][target_id] / float(ntest[language_id])
 
-                for language_id, target_scheme in test_ters.items():
-                    for target_id, cv_ter in target_scheme.items():
+                for language_id, target_scheme in test_ters.iteritems():
+                    for target_id, cv_ter in target_scheme.iteritems():
                         test_ters[language_id][target_id] = cv_ter/float(ntest_labels[language_id][target_id])
 
 
@@ -138,13 +214,15 @@ class Test():
                 self.__store_results(config, batches_id, soft_probs, log_soft_probs, log_likes, logits)
 
 
+
     def __prepare_request_list(self, config):
 
                 request_list = [
                     self.__model.softmax_probs,
                     self.__model.log_softmax_probs,
                     self.__model.seq_len,
-                    self.__model.logits]
+                    self.__model.logits,
+                ]
 
                 if(config[constants.CONFIG_TAGS_TEST.COMPUTE_TER]):
                     request_list.append(self.__model.ters)
@@ -314,8 +392,7 @@ class Test():
         for utt_id, _ in S.items():
 
             #computing minimum L
-            min_length = sys.maxsize
-            #sys.maxint
+            min_length = sys.maxint
             for utt_prob in S[utt_id]:
                 if(utt_prob.shape[0] < min_length):
                     min_length = utt_prob.shape[0]
@@ -370,12 +447,12 @@ class Test():
         test_ters = {}
         ntest_labels = {}
 
-        for language_id, target_scheme in config[constants.CONF_TAGS.LANGUAGE_SCHEME].items():
+        for language_id, target_scheme in config[constants.CONF_TAGS.LANGUAGE_SCHEME].iteritems():
             ntest[language_id] = 0
             test_cost[language_id] = {}
             test_ters[language_id] = {}
             ntest_labels[language_id] = {}
-            for target_id, _ in target_scheme.items():
+            for target_id, _ in target_scheme.iteritems():
                 test_ters[language_id][target_id] = 0
                 test_cost[language_id][target_id] = 0
                 ntest_labels[language_id][target_id] = 0
@@ -390,14 +467,14 @@ class Test():
         log_likes = {}
         logits = {}
 
-        for language_id, target_scheme in config[constants.CONF_TAGS.LANGUAGE_SCHEME].items():
+        for language_id, target_scheme in config[constants.CONF_TAGS.LANGUAGE_SCHEME].iteritems():
             batches_id[language_id] = []
             soft_probs[language_id] = {}
             soft_probs[language_id] = {}
             log_soft_probs[language_id] = {}
             log_likes[language_id] = {}
             logits[language_id] = {}
-            for target_id, _ in target_scheme.items():
+            for target_id, _ in target_scheme.iteritems():
                 soft_probs[language_id][target_id] = []
                 log_soft_probs[language_id][target_id] = []
                 log_likes[language_id][target_id]=[]
@@ -408,7 +485,7 @@ class Test():
     def __print_logs(self, config, test_cost, test_ters, ntest, tic):
 
         print("Test time: %.0f minutes\n" % ((time.time() - tic)/60.0))
-        for language_id, target_scheme in test_ters.items():
+        for language_id, target_scheme in test_ters.iteritems():
             if(len(test_ters) > 1):
                 fp = open(os.path.join(config[constants.CONFIG_TAGS_TEST.RESULTS_DIR],"test.log"), "w")
                 fp.write("Test time: %.0f minutes\n" % ((time.time() - tic)/60.0))
@@ -418,7 +495,7 @@ class Test():
             else:
                 fp = open(os.path.join(config[constants.CONFIG_TAGS_TEST.RESULTS_DIR],"test.log"), "w")
 
-            for target_id,  test_ter in target_scheme.items():
+            for target_id,  test_ter in target_scheme.iteritems():
                 if(len(target_scheme) > 1):
                     print("\tTarget: %s" % (target_id))
                     fp.write("\tTarget: %s" % (target_id))
@@ -429,7 +506,7 @@ class Test():
 
     def __store_results(self, config, uttids, soft_probs, log_soft_probs, log_likes, logits):
 
-        for language_id, target_scheme in config[constants.CONF_TAGS.LANGUAGE_SCHEME].items():
+        for language_id, target_scheme in config[constants.CONF_TAGS.LANGUAGE_SCHEME].iteritems():
             if(len(config[constants.CONF_TAGS.LANGUAGE_SCHEME]) > 1):
                 results_dir = os.path.join(config[constants.CONFIG_TAGS_TEST.RESULTS_DIR], language_id)
             else:
@@ -437,7 +514,7 @@ class Test():
             if not os.path.exists(results_dir):
                 os.makedirs(results_dir)
 
-            for target_id, _ in target_scheme.items():
+            for target_id, _ in target_scheme.iteritems():
 
                     if(config[constants.CONFIG_TAGS_TEST.USE_PRIORS]):
                         writeScp(os.path.join(results_dir, "log_like_"+target_id+".scp"), uttids[language_id][target_id],
@@ -459,10 +536,10 @@ class Test():
         #https://stackoverflow.com/questions/835092/python-dictionary-are-keys-and-values-always-the-same-order
         #TODO although this should be changed for now is a workaround
 
-        for idx_lan, (language_id, target_scheme) in enumerate(config[constants.CONF_TAGS.LANGUAGE_SCHEME].items()):
+        for idx_lan, (language_id, target_scheme) in enumerate(config[constants.CONF_TAGS.LANGUAGE_SCHEME].iteritems()):
             if(ybatch[1] == language_id):
 
-                for idx_tar, (target_id, _) in enumerate(target_scheme.items()):
+                for idx_tar, (target_id, _) in enumerate(target_scheme.iteritems()):
                     #note that ybatch[0] contains targets and ybathc[1] contains language_id
                     m_acum_ters[language_id][target_id] += batch_ters[idx_lan][idx_tar]
                     m_acum_labels[language_id][target_id] += self.__get_label_len(ybatch[0][language_id][target_id])
@@ -478,9 +555,7 @@ class Test():
     def __generate_queue (self, config, data):
 
         test_x, test_y, test_sat = data
-
         data_queue = Queue(config[constants.CONFIG_TAGS_TEST.BATCH_SIZE])
-
         if test_y:
             if test_sat:
                 #x, y, sat
@@ -519,6 +594,7 @@ class Test():
         index_correct_lan = None
         if config[constants.CONFIG_TAGS_TEST.COMPUTE_TER]:
 
+
             #we just convert from dict to a list
             y_batch_list = []
             # batch{language_1;{target_1: labels, target_2: labels},
@@ -527,7 +603,7 @@ class Test():
                 for targets_id, batch_targets in batch_targets.items():
                     y_batch_list.append(batch_targets)
 
-            for language_id, language_scheme in config[constants.CONF_TAGS.LANGUAGE_SCHEME].items():
+            for language_id, language_scheme in config[constants.CONF_TAGS.LANGUAGE_SCHEME].iteritems():
                 if (language_id == y_batch[1]):
                     index_correct_lan = current_lan_index
                 current_lan_index += 1
